@@ -1,5 +1,3 @@
-# install-singbox.sh（已集成自动安装ufw、兼容Debian/Ubuntu、SS AES-256-GCM）
-```bash
 #!/bin/bash
 set -euo pipefail
 
@@ -14,7 +12,7 @@ clear
 echo -e "${GREEN}=============================================${NC}"
 echo -e "${GREEN} Sing-box 一键部署脚本 | DNS-01 Dynv6 专用 ${NC}"
 echo -e "${GREEN} Shadowsocks2022(AES-256-GCM) + Hysteria2 双协议 ${NC}"
-echo -e "${GREEN} 兼容 Debian 11/12 & Ubuntu 20.04/22.04/24.04 ${NC}"
+echo -e "${GREEN} 兼容 Debian 11/12/13 & Ubuntu 20.04/22.04/24.04 ${NC}"
 echo -e "${GREEN}=============================================${NC}"
 echo -e "${YELLOW}说明：强制使用 Dynv6 DNS-01 申请SSL证书，必须提供Dynv6 Token${NC}"
 echo ""
@@ -144,7 +142,7 @@ echo "renew_hook = systemctl reload sing-box" >> ${RENEW_FILE}
 systemctl enable --now certbot.timer
 certbot renew --dry-run
 
-# ====================== 8. 生成 Sing-box 服务端配置 ======================
+# ====================== 8. 生成 Sing-box 服务端配置（DNS改为1.1.1.1/8.8.8.8） ======================
 echo -e "${GREEN}[8/9] 生成 Sing-box 配置文件 /etc/sing-box/config.json${NC}"
 tee /etc/sing-box/config.json >/dev/null <<EOF
 {
@@ -155,7 +153,7 @@ tee /etc/sing-box/config.json >/dev/null <<EOF
   },
   "dns": {
     "servers": [
-      {"address": "223.5.5.5", "detour": "direct"},
+      {"address": "1.1.1.1", "detour": "direct"},
       {"address": "8.8.8.8", "detour": "direct"}
     ]
   },
@@ -232,11 +230,11 @@ HY2_LINK="hysteria2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}?sni=${DOMAIN}&up=${BANDW
 echo -e "${BLUE}HY2分享链接：${HY2_LINK}${NC}"
 echo ""
 
-# ---------------- Sing-box 客户端最简配置模板 ----------------
+# ---------------- Sing-box 客户端最简配置模板（DNS同步改为1.1.1.1） ----------------
 echo -e "${YELLOW}【3. Sing-box 客户端最简配置模板】${NC}"
 cat <<CLIENT
 {
-  "dns": {"servers": [{"address": "8.8.8.8"}]},
+  "dns": {"servers": [{"address": "1.1.1.1"}]},
   "outbounds": [
     {
       "type": "shadowsocks",
