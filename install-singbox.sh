@@ -12,7 +12,7 @@ clear
 echo -e "${GREEN}=============================================${NC}"
 echo -e "${GREEN} Sing-box 一键部署脚本 | DNS-01 Dynv6 专用 ${NC}"
 echo -e "${GREEN} Shadowsocks(aes-256-gcm) + Hysteria2 双协议 ${NC}"
-echo -e "${GREEN} 兼容 Debian 11/12/13 & Ubuntu 20.04/22.04/24.04 ${NC}"
+echo -e "${GREEN}  固定公网IP版 | 兼容 Debian 11/12/13 & Ubuntu ${NC}"
 echo -e "${GREEN}=============================================${NC}"
 echo -e "${YELLOW}说明：强制使用 Dynv6 DNS-01 申请SSL证书，必须提供Dynv6 Token${NC}"
 echo ""
@@ -25,7 +25,7 @@ done
 
 read -p "2. 输入 Dynv6 API Token：" DYNV6_TOKEN
 while [[ -z "$DYNV6_TOKEN" ]]; do
-    read -p "${RED}Token不能为空，DNS-01依赖该Token，请重新输入：${NC}" DYNV6_TOKEN
+    read -p "${RED}Token不能为空，DNS-01证书验证依赖该Token，请重新输入：${NC}" DYNV6_TOKEN
 done
 
 read -p "3. Shadowsocks TCP 端口 [默认8388]：" SS_PORT
@@ -63,7 +63,7 @@ fi
 echo ""
 
 # ====================== 1. 系统依赖安装 ======================
-echo -e "${GREEN}[1/9] 更新系统 & 安装依赖组件${NC}"
+echo -e "${GREEN}[1/8] 更新系统 & 安装依赖组件${NC}"
 apt update && apt upgrade -y
 apt install -y curl wget vim cron ca-certificates certbot openssl
 if ! command -v ufw &> /dev/null; then
@@ -72,7 +72,7 @@ if ! command -v ufw &> /dev/null; then
 fi
 
 # ====================== 2. 防火墙放行端口 ======================
-echo -e "${GREEN}[2/9] 配置防火墙放行端口${NC}"
+echo -e "${GREEN}[2/8] 配置防火墙放行端口${NC}"
 ufw allow 80/tcp
 ufw allow 443/tcp
 ufw allow ${SS_PORT}/tcp
@@ -80,7 +80,7 @@ ufw allow ${HY2_PORT}/udp
 ufw reload
 
 # ====================== 3. 安装 Sing-box 官方源 ======================
-echo -e "${GREEN}[3/9] 安装 Sing-box 官方软件源${NC}"
+echo -e "${GREEN}[3/8] 安装 Sing-box 官方软件源${NC}"
 # 清理历史残留错误源
 rm -f /etc/apt/sources.list.d/sagernet.sources
 rm -f /etc/apt/sources.list.d/sagernet.list
@@ -94,69 +94,41 @@ apt update
 apt install sing-box -y
 sing-box version
 
-# ====================== 4. Dynv6 DDNS 自动更新脚本 ======================
-echo -e "${GREEN}[4/9] 生成 Dynv6 IPv6 动态更新脚本 + 定时任务${NC}"
-# 变量正确展开：用户参数直接注入，子脚本变量转义保留
-tee /usr/local/bin/dynv6-update.sh >/dev/null <<EOF
-#!/bin/bash
-DOMAIN="${DOMAIN}"
-TOKEN="${DYNV6_TOKEN}"
-LOG="/var/log/dynv6.log"
-API="https://dynv6.com/api/update?zone=\$DOMAIN&token=\$TOKEN"
-echo "[\$(date '+%Y-%m-%d %H:%M:%S')] 执行IPv6更新" >> \$LOG
-IPV6=\$(curl -s -6 https://v6.ident.me)
-if [[ -z "\$IPV6" || "\$IPV6" == fe80* ]]; then
-    echo "IPv6获取失败" >> \$LOG
-    exit 1
-fi
-curl -s "\$API&ipv6=\$IPV6" >> \$LOG
-echo "更新完成，当前IPv6: \$IPV6" >> \$LOG
-EOF
-chmod +x /usr/local/bin/dynv6-update.sh
-
-# 添加定时任务（去重，避免重复执行重复添加）
-(crontab -l 2>/dev/null | grep -v "dynv6-update.sh" || true; echo "*/5 * * * * /usr/local/bin/dynv6-update.sh") | crontab -
-
-# 测试执行（失败不终止主脚本，仅警告）
-if /usr/local/bin/dynv6-update.sh; then
-    echo -e "${GREEN}DDNS 更新测试成功${NC}"
-else
-    echo -e "${YELLOW}警告：DDNS 更新测试失败，可能是 IPv6 网络不可用，不影响服务部署${NC}"
-fi
-
-# ====================== 5. Dynv6 Certbot DNS-01 Hook ======================
-echo -e "${GREEN}[5/9] 生成 DNS-01 证书验证钩子脚本${NC}"
+# ====================== 4. 生成 DNS-01 证书验证钩子 ======================
+echo -e "${GREEN}[4/8] 生成 DNS-01 证书验证钩子脚本${NC}"
 tee /usr/local/bin/dynv6-certbot-hook.sh >/dev/null <<EOF
 #!/bin/bash
 DOMAIN="${DOMAIN}"
 TOKEN="${DYNV6_TOKEN}"
-API="https://dynv6.com/api/update?zone=\$DOMAIN&token=\$TOKEN"
+
 if [[ -n "\$CERTBOT_VALIDATION" ]]; then
-    curl -s "\$API&txt=\$CERTBOT_VALIDATION"
-    sleep 15
+    # 创建/更新 ACME 验证 TXT 记录
+    curl -s "https://dynv6.com/api/records?token=\$TOKEN&zone=\$DOMAIN&name=_acme-challenge&type=txt&data=\$CERTBOT_VALIDATION" > /dev/null
+    # 等待 DNS 全球传播
+    sleep 25
 else
-    curl -s "\$API&txt="
+    # 清理验证记录
+    curl -s "https://dynv6.com/api/records?token=\$TOKEN&zone=\$DOMAIN&name=_acme-challenge&type=txt&data=" > /dev/null
 fi
 EOF
 chmod +x /usr/local/bin/dynv6-certbot-hook.sh
 
-# ====================== 6. DNS-01 申请 SSL 证书 ======================
-echo -e "${GREEN}[6/9] 通过 Dynv6 DNS-01 申请 Let's Encrypt 证书${NC}"
+# ====================== 5. 申请 SSL 证书 ======================
+echo -e "${GREEN}[5/8] 通过 Dynv6 DNS-01 申请 Let's Encrypt 证书${NC}"
 certbot certonly --manual --preferred-challenges dns \
     --manual-auth-hook /usr/local/bin/dynv6-certbot-hook.sh \
     --manual-cleanup-hook /usr/local/bin/dynv6-certbot-hook.sh \
     -d ${DOMAIN} --non-interactive --agree-tos --register-unsafely-without-email
 
-# ====================== 7. 配置证书自动续期 ======================
-echo -e "${GREEN}[7/9] 配置证书自动续期，续证后热重载sing-box${NC}"
+# ====================== 6. 配置证书自动续期 ======================
+echo -e "${GREEN}[6/8] 配置证书自动续期，续证后热重载sing-box${NC}"
 RENEW_FILE="/etc/letsencrypt/renewal/${DOMAIN}.conf"
-# 避免重复追加
 grep -q "renew_hook" "${RENEW_FILE}" || echo "renew_hook = systemctl reload sing-box" >> "${RENEW_FILE}"
 systemctl enable --now certbot.timer
 certbot renew --dry-run
 
-# ====================== 8. 生成 Sing-box 服务端配置 ======================
-echo -e "${GREEN}[8/9] 生成 Sing-box 配置文件 /etc/sing-box/config.json${NC}"
+# ====================== 7. 生成 Sing-box 服务端配置 ======================
+echo -e "${GREEN}[7/8] 生成 Sing-box 配置文件 /etc/sing-box/config.json${NC}"
 tee /etc/sing-box/config.json >/dev/null <<EOF
 {
   "log": {
@@ -207,8 +179,8 @@ tee /etc/sing-box/config.json >/dev/null <<EOF
 EOF
 sing-box check -c /etc/sing-box/config.json
 
-# ====================== 9. 启动 Sing-box 服务 ======================
-echo -e "${GREEN}[9/9] 加载systemd并启动sing-box开机自启${NC}"
+# ====================== 8. 启动 Sing-box 服务 ======================
+echo -e "${GREEN}[8/8] 加载systemd并启动sing-box开机自启${NC}"
 systemctl daemon-reload
 systemctl enable --now sing-box
 
@@ -274,5 +246,4 @@ echo "实时日志：tail -f /var/log/sing-box.log"
 echo "手动续证：certbot renew"
 echo "查看证书：certbot certificates"
 echo "端口监听：ss -tulnp | grep sing-box"
-echo "手动更新DDNS：/usr/local/bin/dynv6-update.sh"
 echo -e "${GREEN}=============================================${NC}"
