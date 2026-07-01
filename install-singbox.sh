@@ -1,3 +1,6 @@
+
+# install-singbox.sh（已集成自动安装ufw、兼容Debian/Ubuntu、SS AES-256-GCM）
+```bash
 #!/bin/bash
 set -euo pipefail
 
@@ -12,6 +15,7 @@ clear
 echo -e "${GREEN}=============================================${NC}"
 echo -e "${GREEN} Sing-box 一键部署脚本 | DNS-01 Dynv6 专用 ${NC}"
 echo -e "${GREEN} Shadowsocks2022(AES-256-GCM) + Hysteria2 双协议 ${NC}"
+echo -e "${GREEN} 兼容 Debian 11/12 & Ubuntu 20.04/22.04/24.04 ${NC}"
 echo -e "${GREEN}=============================================${NC}"
 echo -e "${YELLOW}说明：强制使用 Dynv6 DNS-01 申请SSL证书，必须提供Dynv6 Token${NC}"
 echo ""
@@ -63,7 +67,12 @@ echo ""
 # ====================== 1. 系统依赖安装 ======================
 echo -e "${GREEN}[1/9] 更新系统 & 安装依赖组件${NC}"
 apt update && apt upgrade -y
-apt install -y curl wget vim cron ca-certificates certbot ufw openssl
+apt install -y curl wget vim cron ca-certificates certbot openssl
+# 自动安装ufw，适配无防火墙纯净VPS
+if ! command -v ufw &> /dev/null; then
+    echo -e "${YELLOW}未检测到ufw防火墙，自动安装中...${NC}"
+    apt install -y ufw
+fi
 
 # ====================== 2. 防火墙放行端口 ======================
 echo -e "${GREEN}[2/9] 配置防火墙放行端口${NC}"
