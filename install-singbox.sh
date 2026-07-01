@@ -120,10 +120,11 @@ fi
     --fullchain-file "${CERT_DIR}/fullchain.pem" \
     --reloadcmd "systemctl is-active --quiet sing-box && systemctl reload sing-box || true" || true
 
-# ====================== 5. 配置证书自动续期 ======================
-echo -e "${GREEN}[5/7] 配置证书自动续期，续证后热重载sing-box${NC}"
-# dry-run测试增加容错，避免非致命错误中断脚本
-/root/.acme.sh/acme.sh --renew -d "${DOMAIN}" --dry-run || true
+# ====================== 5. 证书有效期与自动续期确认 ======================
+echo -e "${GREEN}[5/7] 确认证书有效期与自动续期配置${NC}"
+echo -e "${YELLOW}当前证书有效期：${NC}"
+openssl x509 -in "${CERT_DIR}/fullchain.pem" -dates -noout
+echo -e "${YELLOW}自动续期：acme.sh每日凌晨检测，剩余30天自动续签${NC}"
 
 # ====================== 6. 生成 Sing-box 服务端配置 ======================
 echo -e "${GREEN}[6/7] 生成 Sing-box 配置文件 /etc/sing-box/config.json${NC}"
@@ -136,9 +137,19 @@ tee /etc/sing-box/config.json >/dev/null <<EOF
   },
   "dns": {
     "servers": [
-      {"address": "1.1.1.1", "detour": "direct"},
-      {"address": "8.8.8.8", "detour": "direct"}
-    ]
+      {
+        "tag": "dns_cloudflare",
+        "address": "1.1.1.1",
+        "detour": "direct"
+      },
+      {
+        "tag": "dns_google",
+        "address": "8.8.8.8",
+        "detour": "direct"
+      }
+    ],
+    "final": "dns_cloudflare",
+    "independent_cache": true
   },
   "inbounds": [
     {
@@ -148,7 +159,10 @@ tee /etc/sing-box/config.json >/dev/null <<EOF
       "listen_port": ${SS_PORT},
       "method": "aes-256-gcm",
       "password": "${SS_PASS}",
-      "multiplex": {"enabled": true, "max_connections": 64}
+      "multiplex": {
+        "enabled": true,
+        "max_connections": 64
+      }
     },
     {
       "type": "hysteria2",
@@ -167,10 +181,17 @@ tee /etc/sing-box/config.json >/dev/null <<EOF
         "up": "${BANDWIDTH} mbps",
         "down": "${BANDWIDTH} mbps"
       },
-      "obfs": {"type": "none"}
+      "obfs": {
+        "type": "none"
+      }
     }
   ],
-  "outbounds": [{"type": "direct", "tag": "direct"}]
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ]
 }
 EOF
 sing-box check -c /etc/sing-box/config.json
