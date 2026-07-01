@@ -47,7 +47,7 @@
 ### 2\. 执行部署
 
 ```Plain Text
-wget https://raw.githubusercontent.com/你的用户名/singbox-dynv6-deploy/main/install-singbox.sh
+wget https://raw.githubusercontent.com/jaxgj/singbox-dynv6-deploy/main/install-singbox.sh
 chmod +x install-singbox.sh
 sudo ./install-singbox.sh
 ```
