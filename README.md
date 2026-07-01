@@ -1,0 +1,1 @@
+# nstall-singbox.sh
