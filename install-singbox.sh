@@ -10,11 +10,10 @@ NC='\033[0m'
 
 clear
 echo -e "${GREEN}=============================================${NC}"
-echo -e "${GREEN} Sing-box 一键部署脚本 | DNS-01 Dynv6 专用 ${NC}"
+echo -e "${GREEN} Sing-box 一键部署脚本 | Dynv6 固定IP版 ${NC}"
 echo -e "${GREEN} Shadowsocks(aes-256-gcm) + Hysteria2 双协议 ${NC}"
-echo -e "${GREEN}  固定公网IP版 | 兼容 Debian 11/12/13 & Ubuntu ${NC}"
+echo -e "${GREEN}  基于acme.sh DNS-01验证 | 兼容 Debian 11/12/13 ${NC}"
 echo -e "${GREEN}=============================================${NC}"
-echo -e "${YELLOW}说明：强制使用 Dynv6 DNS-01 申请SSL证书，必须提供Dynv6 Token${NC}"
 echo ""
 
 # ====================== 交互输入区 ======================
@@ -63,16 +62,16 @@ fi
 echo ""
 
 # ====================== 1. 系统依赖安装 ======================
-echo -e "${GREEN}[1/8] 更新系统 & 安装依赖组件${NC}"
+echo -e "${GREEN}[1/7] 更新系统 & 安装依赖组件${NC}"
 apt update && apt upgrade -y
-apt install -y curl wget vim cron ca-certificates certbot openssl
+apt install -y curl wget vim cron ca-certificates openssl socat
 if ! command -v ufw &> /dev/null; then
     echo -e "${YELLOW}未检测到ufw防火墙，自动安装中...${NC}"
     apt install -y ufw
 fi
 
 # ====================== 2. 防火墙放行端口 ======================
-echo -e "${GREEN}[2/8] 配置防火墙放行端口${NC}"
+echo -e "${GREEN}[2/7] 配置防火墙放行端口${NC}"
 ufw allow 80/tcp
 ufw allow 443/tcp
 ufw allow ${SS_PORT}/tcp
@@ -80,7 +79,7 @@ ufw allow ${HY2_PORT}/udp
 ufw reload
 
 # ====================== 3. 安装 Sing-box 官方源 ======================
-echo -e "${GREEN}[3/8] 安装 Sing-box 官方软件源${NC}"
+echo -e "${GREEN}[3/7] 安装 Sing-box 官方软件源${NC}"
 # 清理历史残留错误源
 rm -f /etc/apt/sources.list.d/sagernet.sources
 rm -f /etc/apt/sources.list.d/sagernet.list
@@ -94,41 +93,40 @@ apt update
 apt install sing-box -y
 sing-box version
 
-# ====================== 4. 生成 DNS-01 证书验证钩子 ======================
-echo -e "${GREEN}[4/8] 生成 DNS-01 证书验证钩子脚本${NC}"
-tee /usr/local/bin/dynv6-certbot-hook.sh >/dev/null <<EOF
-#!/bin/bash
-DOMAIN="${DOMAIN}"
-TOKEN="${DYNV6_TOKEN}"
+# ====================== 4. 安装acme.sh并签发证书 ======================
+echo -e "${GREEN}[4/7] 安装acme.sh并通过Dynv6 DNS-01签发证书${NC}"
+# 导出Token供acme.sh插件读取
+export DYNV6_TOKEN="${DYNV6_TOKEN}"
 
-if [[ -n "\$CERTBOT_VALIDATION" ]]; then
-    # 创建/更新 ACME 验证 TXT 记录
-    curl -s "https://dynv6.com/api/records?token=\$TOKEN&zone=\$DOMAIN&name=_acme-challenge&type=txt&data=\$CERTBOT_VALIDATION" > /dev/null
-    # 等待 DNS 全球传播
-    sleep 25
+# 若已安装则跳过，否则全新安装
+if [ -f "/root/.acme.sh/acme.sh" ]; then
+    echo -e "${YELLOW}检测到已安装acme.sh，跳过安装${NC}"
 else
-    # 清理验证记录
-    curl -s "https://dynv6.com/api/records?token=\$TOKEN&zone=\$DOMAIN&name=_acme-challenge&type=txt&data=" > /dev/null
+    curl -fsSL https://get.acme.sh | sh -s email=admin@example.com
 fi
-EOF
-chmod +x /usr/local/bin/dynv6-certbot-hook.sh
 
-# ====================== 5. 申请 SSL 证书 ======================
-echo -e "${GREEN}[5/8] 通过 Dynv6 DNS-01 申请 Let's Encrypt 证书${NC}"
-certbot certonly --manual --preferred-challenges dns \
-    --manual-auth-hook /usr/local/bin/dynv6-certbot-hook.sh \
-    --manual-cleanup-hook /usr/local/bin/dynv6-certbot-hook.sh \
-    -d ${DOMAIN} --non-interactive --agree-tos --register-unsafely-without-email
+# 证书已存在则跳过签发，否则申请
+CERT_DIR="/etc/ssl/${DOMAIN}"
+mkdir -p "${CERT_DIR}"
+if [ -f "/root/.acme.sh/${DOMAIN}_ecc/${DOMAIN}.cer" ]; then
+    echo -e "${YELLOW}检测到已存在证书，跳过签发步骤${NC}"
+else
+    /root/.acme.sh/acme.sh --issue --dns dns_dynv6 -d "${DOMAIN}"
+fi
 
-# ====================== 6. 配置证书自动续期 ======================
-echo -e "${GREEN}[6/8] 配置证书自动续期，续证后热重载sing-box${NC}"
-RENEW_FILE="/etc/letsencrypt/renewal/${DOMAIN}.conf"
-grep -q "renew_hook" "${RENEW_FILE}" || echo "renew_hook = systemctl reload sing-box" >> "${RENEW_FILE}"
-systemctl enable --now certbot.timer
-certbot renew --dry-run
+# 安装证书到统一目录，方便sing-box调用
+/root/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" \
+    --key-file "${CERT_DIR}/privkey.pem" \
+    --fullchain-file "${CERT_DIR}/fullchain.pem" \
+    --reloadcmd "systemctl reload sing-box"
 
-# ====================== 7. 生成 Sing-box 服务端配置 ======================
-echo -e "${GREEN}[7/8] 生成 Sing-box 配置文件 /etc/sing-box/config.json${NC}"
+# ====================== 5. 配置证书自动续期 ======================
+echo -e "${GREEN}[5/7] 配置证书自动续期，续证后热重载sing-box${NC}"
+# acme.sh安装时已自动创建定时任务，此处仅确认重载命令生效
+/root/.acme.sh/acme.sh --renew -d "${DOMAIN}" --dry-run
+
+# ====================== 6. 生成 Sing-box 服务端配置 ======================
+echo -e "${GREEN}[6/7] 生成 Sing-box 配置文件 /etc/sing-box/config.json${NC}"
 tee /etc/sing-box/config.json >/dev/null <<EOF
 {
   "log": {
@@ -161,8 +159,8 @@ tee /etc/sing-box/config.json >/dev/null <<EOF
       "tls": {
         "enabled": true,
         "server_name": "${DOMAIN}",
-        "certificate_path": "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem",
-        "key_path": "/etc/letsencrypt/live/${DOMAIN}/privkey.pem",
+        "certificate_path": "${CERT_DIR}/fullchain.pem",
+        "key_path": "${CERT_DIR}/privkey.pem",
         "alpn": ["h3"]
       },
       "bandwidth": {
@@ -179,8 +177,8 @@ tee /etc/sing-box/config.json >/dev/null <<EOF
 EOF
 sing-box check -c /etc/sing-box/config.json
 
-# ====================== 8. 启动 Sing-box 服务 ======================
-echo -e "${GREEN}[8/8] 加载systemd并启动sing-box开机自启${NC}"
+# ====================== 7. 启动 Sing-box 服务 ======================
+echo -e "${GREEN}[7/7] 加载systemd并启动sing-box开机自启${NC}"
 systemctl daemon-reload
 systemctl enable --now sing-box
 
@@ -208,42 +206,21 @@ echo "密码：${HY2_PASS}"
 echo "传输协议：QUIC/h3"
 echo "上行带宽：${BANDWIDTH} mbps"
 echo "下行带宽：${BANDWIDTH} mbps"
-HY2_LINK="hysteria2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}?sni=${DOMAIN}&up=${BANDWIDTH}&down=${BANDWIDTH}#HY2-${DOMAIN}"
+HY2_LINK="hysteria2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}/?sni=${DOMAIN}#HY2-${DOMAIN}"
 echo -e "${BLUE}HY2分享链接：${HY2_LINK}${NC}"
 echo ""
 
-echo -e "${YELLOW}【3. Sing-box 客户端最简配置模板】${NC}"
-cat <<CLIENT
-{
-  "dns": {"servers": [{"address": "1.1.1.1"}]},
-  "outbounds": [
-    {
-      "type": "shadowsocks",
-      "server": "${DOMAIN}",
-      "server_port": ${SS_PORT},
-      "method": "aes-256-gcm",
-      "password": "${SS_PASS}",
-      "multiplex": {"enabled": true}
-    },
-    {
-      "type": "hysteria2",
-      "server": "${DOMAIN}",
-      "server_port": ${HY2_PORT},
-      "password": "${HY2_PASS}",
-      "tls": {"server_name": "${DOMAIN}"},
-      "bandwidth": {"up": "${BANDWIDTH} mbps", "down": "${BANDWIDTH} mbps"}
-    },
-    {"type": "direct", "tag": "direct"}
-  ]
-}
-CLIENT
+echo -e "${YELLOW}【3. 证书与续期】${NC}"
+echo "证书存储目录：${CERT_DIR}"
+echo "自动续期：acme.sh每日检测，剩余30天自动续签"
+echo "续期后自动重载sing-box服务，无需人工干预"
 echo ""
 
 echo -e "${GREEN}【4. 服务器维护常用命令】${NC}"
 echo "查看运行状态：systemctl status sing-box"
 echo "重载配置/证书：systemctl reload sing-box"
 echo "实时日志：tail -f /var/log/sing-box.log"
-echo "手动续证：certbot renew"
-echo "查看证书：certbot certificates"
+echo "手动续证：/root/.acme.sh/acme.sh --renew -d ${DOMAIN} --force"
+echo "查看证书：openssl x509 -in ${CERT_DIR}/fullchain.pem -dates -noout"
 echo "端口监听：ss -tulnp | grep sing-box"
 echo -e "${GREEN}=============================================${NC}"
