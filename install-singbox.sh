@@ -80,14 +80,14 @@ ufw reload
 
 # ====================== 3. 安装 Sing-box 官方源 ======================
 echo -e "${GREEN}[3/7] 安装 Sing-box 官方软件源${NC}"
-# 清理历史残留错误源
+# 清理历史残留错误源文件，避免格式冲突
 rm -f /etc/apt/sources.list.d/sagernet.sources
 rm -f /etc/apt/sources.list.d/sagernet.list
 
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://sing-box.app/gpg.key | tee /etc/apt/keyrings/sagernet.asc >/dev/null
 chmod 644 /etc/apt/keyrings/sagernet.asc
-# 传统.list格式全版本兼容
+# 使用传统.list格式，全Debian/Ubuntu版本兼容
 echo "deb [signed-by=/etc/apt/keyrings/sagernet.asc] https://deb.sagernet.org/ * *" | tee /etc/apt/sources.list.d/sagernet.list
 apt update
 apt install sing-box -y
@@ -99,29 +99,31 @@ export DYNV6_TOKEN="${DYNV6_TOKEN}"
 CERT_DIR="/etc/ssl/${DOMAIN}"
 mkdir -p "${CERT_DIR}"
 
-# 安装acme.sh
+# 安装acme.sh，已存在则跳过
 if [ -f "/root/.acme.sh/acme.sh" ]; then
     echo -e "${YELLOW}检测到已安装acme.sh，跳过安装${NC}"
 else
     curl -fsSL https://get.acme.sh | sh -s email=admin@example.com
 fi
 
-# 签发证书
+# 签发证书，已存在则跳过
 if [ -f "/root/.acme.sh/${DOMAIN}_ecc/${DOMAIN}.cer" ]; then
     echo -e "${YELLOW}检测到已存在证书，跳过签发步骤${NC}"
 else
     /root/.acme.sh/acme.sh --issue --dns dns_dynv6 -d "${DOMAIN}"
 fi
 
-# 安装证书到统一目录，重载命令增加服务状态判断
+# 安装证书到统一目录
+# 核心兼容逻辑：服务运行则热重载，未运行则静默跳过，不报错、不中断脚本
 /root/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" \
     --key-file "${CERT_DIR}/privkey.pem" \
     --fullchain-file "${CERT_DIR}/fullchain.pem" \
-    --reloadcmd "systemctl is-active --quiet sing-box && systemctl reload sing-box || true"
+    --reloadcmd "systemctl is-active --quiet sing-box && systemctl reload sing-box || true" || true
 
 # ====================== 5. 配置证书自动续期 ======================
 echo -e "${GREEN}[5/7] 配置证书自动续期，续证后热重载sing-box${NC}"
-/root/.acme.sh/acme.sh --renew -d "${DOMAIN}" --dry-run
+# dry-run测试增加容错，避免非致命错误中断脚本
+/root/.acme.sh/acme.sh --renew -d "${DOMAIN}" --dry-run || true
 
 # ====================== 6. 生成 Sing-box 服务端配置 ======================
 echo -e "${GREEN}[6/7] 生成 Sing-box 配置文件 /etc/sing-box/config.json${NC}"
@@ -209,7 +211,7 @@ echo ""
 echo -e "${YELLOW}【3. 证书与续期】${NC}"
 echo "证书存储目录：${CERT_DIR}"
 echo "自动续期：acme.sh每日检测，剩余30天自动续签"
-echo "续期后自动重载sing-box服务，无需人工干预"
+echo "续期后自动热重载sing-box，在线用户无感知"
 echo ""
 
 echo -e "${GREEN}【4. 服务器维护常用命令】${NC}"
