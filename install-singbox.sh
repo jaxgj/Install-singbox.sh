@@ -81,10 +81,14 @@ ufw reload
 
 # ====================== 3. 安装 Sing-box 官方源 ======================
 echo -e "${GREEN}[3/9] 安装 Sing-box 官方软件源${NC}"
+# 清理历史残留错误源
+rm -f /etc/apt/sources.list.d/sagernet.sources
+rm -f /etc/apt/sources.list.d/sagernet.list
+
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://sing-box.app/gpg.key | tee /etc/apt/keyrings/sagernet.asc >/dev/null
 chmod 644 /etc/apt/keyrings/sagernet.asc
-# 使用传统.list格式，全版本兼容，避免deb822格式错误
+# 传统.list格式全版本兼容
 echo "deb [signed-by=/etc/apt/keyrings/sagernet.asc] https://deb.sagernet.org/ * *" | tee /etc/apt/sources.list.d/sagernet.list
 apt update
 apt install sing-box -y
@@ -92,37 +96,46 @@ sing-box version
 
 # ====================== 4. Dynv6 DDNS 自动更新脚本 ======================
 echo -e "${GREEN}[4/9] 生成 Dynv6 IPv6 动态更新脚本 + 定时任务${NC}"
-tee /usr/local/bin/dynv6-update.sh >/dev/null <<'EOF'
+# 变量正确展开：用户参数直接注入，子脚本变量转义保留
+tee /usr/local/bin/dynv6-update.sh >/dev/null <<EOF
 #!/bin/bash
 DOMAIN="${DOMAIN}"
 TOKEN="${DYNV6_TOKEN}"
 LOG="/var/log/dynv6.log"
-API="https://dynv6.com/api/update?zone=$DOMAIN&token=$TOKEN"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] 执行IPv6更新" >> $LOG
-IPV6=$(curl -s -6 https://v6.ident.me)
-if [[ -z "$IPV6" || "$IPV6" == fe80* ]]; then
-    echo "IPv6获取失败" >> $LOG
+API="https://dynv6.com/api/update?zone=\$DOMAIN&token=\$TOKEN"
+echo "[\$(date '+%Y-%m-%d %H:%M:%S')] 执行IPv6更新" >> \$LOG
+IPV6=\$(curl -s -6 https://v6.ident.me)
+if [[ -z "\$IPV6" || "\$IPV6" == fe80* ]]; then
+    echo "IPv6获取失败" >> \$LOG
     exit 1
 fi
-curl -s "$API&ipv6=$IPV6" >> $LOG
-echo "更新完成，当前IPv6: $IPV6" >> $LOG
+curl -s "\$API&ipv6=\$IPV6" >> \$LOG
+echo "更新完成，当前IPv6: \$IPV6" >> \$LOG
 EOF
 chmod +x /usr/local/bin/dynv6-update.sh
-(crontab -l 2>/dev/null; echo "*/5 * * * * /usr/local/bin/dynv6-update.sh") | crontab -
-/usr/local/bin/dynv6-update.sh
+
+# 添加定时任务（去重，避免重复执行重复添加）
+(crontab -l 2>/dev/null | grep -v "dynv6-update.sh" || true; echo "*/5 * * * * /usr/local/bin/dynv6-update.sh") | crontab -
+
+# 测试执行（失败不终止主脚本，仅警告）
+if /usr/local/bin/dynv6-update.sh; then
+    echo -e "${GREEN}DDNS 更新测试成功${NC}"
+else
+    echo -e "${YELLOW}警告：DDNS 更新测试失败，可能是 IPv6 网络不可用，不影响服务部署${NC}"
+fi
 
 # ====================== 5. Dynv6 Certbot DNS-01 Hook ======================
 echo -e "${GREEN}[5/9] 生成 DNS-01 证书验证钩子脚本${NC}"
-tee /usr/local/bin/dynv6-certbot-hook.sh >/dev/null <<'EOF'
+tee /usr/local/bin/dynv6-certbot-hook.sh >/dev/null <<EOF
 #!/bin/bash
 DOMAIN="${DOMAIN}"
 TOKEN="${DYNV6_TOKEN}"
-API="https://dynv6.com/api/update?zone=$DOMAIN&token=$TOKEN"
-if [[ -n "$CERTBOT_VALIDATION" ]]; then
-    curl -s "$API&txt=$CERTBOT_VALIDATION"
+API="https://dynv6.com/api/update?zone=\$DOMAIN&token=\$TOKEN"
+if [[ -n "\$CERTBOT_VALIDATION" ]]; then
+    curl -s "\$API&txt=\$CERTBOT_VALIDATION"
     sleep 15
 else
-    curl -s "$API&txt="
+    curl -s "\$API&txt="
 fi
 EOF
 chmod +x /usr/local/bin/dynv6-certbot-hook.sh
@@ -132,12 +145,13 @@ echo -e "${GREEN}[6/9] 通过 Dynv6 DNS-01 申请 Let's Encrypt 证书${NC}"
 certbot certonly --manual --preferred-challenges dns \
     --manual-auth-hook /usr/local/bin/dynv6-certbot-hook.sh \
     --manual-cleanup-hook /usr/local/bin/dynv6-certbot-hook.sh \
-    -d ${DOMAIN}
+    -d ${DOMAIN} --non-interactive --agree-tos --register-unsafely-without-email
 
 # ====================== 7. 配置证书自动续期 ======================
 echo -e "${GREEN}[7/9] 配置证书自动续期，续证后热重载sing-box${NC}"
 RENEW_FILE="/etc/letsencrypt/renewal/${DOMAIN}.conf"
-echo "renew_hook = systemctl reload sing-box" >> ${RENEW_FILE}
+# 避免重复追加
+grep -q "renew_hook" "${RENEW_FILE}" || echo "renew_hook = systemctl reload sing-box" >> "${RENEW_FILE}"
 systemctl enable --now certbot.timer
 certbot renew --dry-run
 
@@ -164,7 +178,7 @@ tee /etc/sing-box/config.json >/dev/null <<EOF
       "listen_port": ${SS_PORT},
       "method": "aes-256-gcm",
       "password": "${SS_PASS}",
-      "multiplex": {"enabled": true, "max_streams": 64}
+      "multiplex": {"enabled": true, "max_connections": 64}
     },
     {
       "type": "hysteria2",
@@ -183,7 +197,9 @@ tee /etc/sing-box/config.json >/dev/null <<EOF
         "up": "${BANDWIDTH} mbps",
         "down": "${BANDWIDTH} mbps"
       },
-      "obfs": ""
+      "obfs": {
+        "type": "none"
+      }
     }
   ],
   "outbounds": [{"type": "direct", "tag": "direct"}]
