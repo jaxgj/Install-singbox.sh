@@ -32,7 +32,6 @@ read -p "3. Shadowsocks TCP 端口 [默认8388]：" SS_PORT
 SS_PORT=${SS_PORT:-8388}
 
 read -p "4. Shadowsocks 自定义密码，留空自动随机生成：" SS_PASS
-# SS密码为空则自动生成高强度随机字符串
 if [[ -z "$SS_PASS" ]]; then
     SS_PASS=$(openssl rand -base64 16 | tr -d '/+=\n')
 fi
@@ -44,7 +43,6 @@ read -p "6. Hysteria2 上下行带宽 mbps [默认100]：" BANDWIDTH
 BANDWIDTH=${BANDWIDTH:-100}
 
 read -p "7. Hysteria2 自定义密码，留空自动随机生成：" HY2_PASS
-# Hy2密码为空则随机生成高强度字符串
 if [[ -z "$HY2_PASS" ]]; then
     HY2_PASS=$(openssl rand -base64 24 | tr -d '/+=\n')
 fi
@@ -68,7 +66,6 @@ echo ""
 echo -e "${GREEN}[1/9] 更新系统 & 安装依赖组件${NC}"
 apt update && apt upgrade -y
 apt install -y curl wget vim cron ca-certificates certbot openssl
-# 自动安装ufw，适配无防火墙纯净VPS
 if ! command -v ufw &> /dev/null; then
     echo -e "${YELLOW}未检测到ufw防火墙，自动安装中...${NC}"
     apt install -y ufw
@@ -87,7 +84,8 @@ echo -e "${GREEN}[3/9] 安装 Sing-box 官方软件源${NC}"
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://sing-box.app/gpg.key | tee /etc/apt/keyrings/sagernet.asc >/dev/null
 chmod 644 /etc/apt/keyrings/sagernet.asc
-echo "deb [signed-by=/etc/apt/keyrings/sagernet.asc] https://deb.sagernet.org/ * *" | tee /etc/apt/sources.list.d/sagernet.sources
+# 使用传统.list格式，全版本兼容，避免deb822格式错误
+echo "deb [signed-by=/etc/apt/keyrings/sagernet.asc] https://deb.sagernet.org/ * *" | tee /etc/apt/sources.list.d/sagernet.list
 apt update
 apt install sing-box -y
 sing-box version
@@ -110,9 +108,7 @@ curl -s "$API&ipv6=$IPV6" >> $LOG
 echo "更新完成，当前IPv6: $IPV6" >> $LOG
 EOF
 chmod +x /usr/local/bin/dynv6-update.sh
-# 每5分钟执行一次DDNS更新
 (crontab -l 2>/dev/null; echo "*/5 * * * * /usr/local/bin/dynv6-update.sh") | crontab -
-# 立即执行一次测试
 /usr/local/bin/dynv6-update.sh
 
 # ====================== 5. Dynv6 Certbot DNS-01 Hook ======================
@@ -138,7 +134,7 @@ certbot certonly --manual --preferred-challenges dns \
     --manual-cleanup-hook /usr/local/bin/dynv6-certbot-hook.sh \
     -d ${DOMAIN}
 
-# ====================== 7. 配置证书自动续期 + 重载sing-box ======================
+# ====================== 7. 配置证书自动续期 ======================
 echo -e "${GREEN}[7/9] 配置证书自动续期，续证后热重载sing-box${NC}"
 RENEW_FILE="/etc/letsencrypt/renewal/${DOMAIN}.conf"
 echo "renew_hook = systemctl reload sing-box" >> ${RENEW_FILE}
@@ -193,7 +189,6 @@ tee /etc/sing-box/config.json >/dev/null <<EOF
   "outbounds": [{"type": "direct", "tag": "direct"}]
 }
 EOF
-# 校验配置语法
 sing-box check -c /etc/sing-box/config.json
 
 # ====================== 9. 启动 Sing-box 服务 ======================
@@ -201,26 +196,23 @@ echo -e "${GREEN}[9/9] 加载systemd并启动sing-box开机自启${NC}"
 systemctl daemon-reload
 systemctl enable --now sing-box
 
-# ====================== 输出完整客户端配置 & 分享链接 ======================
+# ====================== 输出客户端配置 ======================
 clear
 echo -e "${GREEN}=============================================${NC}"
 echo -e "${GREEN}          部署全部完成！客户端参数汇总        ${NC}"
 echo -e "${GREEN}=============================================${NC}"
 echo ""
 
-# ---------------- Shadowsocks aes-256-gcm ----------------
 echo -e "${YELLOW}【1. Shadowsocks】${NC}"
 echo "服务器地址：${DOMAIN}"
 echo "端口：${SS_PORT}"
 echo "加密方式：aes-256-gcm"
 echo "密码：${SS_PASS}"
 echo "多路复用：开启"
-# SS标准分享链接
 SS_LINK="ss://$(echo -n "aes-256-gcm:${SS_PASS}" | base64 -w0)@${DOMAIN}:${SS_PORT}#SS-${DOMAIN}"
 echo -e "${BLUE}SS分享链接：${SS_LINK}${NC}"
 echo ""
 
-# ---------------- Hysteria2 ----------------
 echo -e "${YELLOW}【2. Hysteria2】${NC}"
 echo "服务器：${DOMAIN}:${HY2_PORT}"
 echo "SNI：${DOMAIN}"
@@ -228,12 +220,10 @@ echo "密码：${HY2_PASS}"
 echo "传输协议：QUIC/h3"
 echo "上行带宽：${BANDWIDTH} mbps"
 echo "下行带宽：${BANDWIDTH} mbps"
-# Hysteria2标准分享链接
 HY2_LINK="hysteria2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}?sni=${DOMAIN}&up=${BANDWIDTH}&down=${BANDWIDTH}#HY2-${DOMAIN}"
 echo -e "${BLUE}HY2分享链接：${HY2_LINK}${NC}"
 echo ""
 
-# ---------------- Sing-box 客户端最简配置模板 ----------------
 echo -e "${YELLOW}【3. Sing-box 客户端最简配置模板】${NC}"
 cat <<CLIENT
 {
@@ -261,13 +251,12 @@ cat <<CLIENT
 CLIENT
 echo ""
 
-# ---------------- 常用维护命令 ----------------
 echo -e "${GREEN}【4. 服务器维护常用命令】${NC}"
-echo "查看sing-box运行状态：systemctl status sing-box"
-echo "重载配置/证书(不中断连接)：systemctl reload sing-box"
-echo "实时日志查看：tail -f /var/log/sing-box.log"
-echo "手动强制续SSL证书：certbot renew"
-echo "查看证书有效期：certbot certificates"
-echo "查看端口监听：ss -tulnp | grep sing-box"
-echo "手动更新Dynv6 IPv6：/usr/local/bin/dynv6-update.sh"
+echo "查看运行状态：systemctl status sing-box"
+echo "重载配置/证书：systemctl reload sing-box"
+echo "实时日志：tail -f /var/log/sing-box.log"
+echo "手动续证：certbot renew"
+echo "查看证书：certbot certificates"
+echo "端口监听：ss -tulnp | grep sing-box"
+echo "手动更新DDNS：/usr/local/bin/dynv6-update.sh"
 echo -e "${GREEN}=============================================${NC}"
