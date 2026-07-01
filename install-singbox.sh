@@ -38,13 +38,13 @@ read -p "5. Hysteria2 上下行带宽 mbps [默认100]：" BANDWIDTH
 BANDWIDTH=${BANDWIDTH:-100}
 
 read -p "6. Hysteria2 自定义密码，留空自动随机生成：" HY2_PASS
-# Hy2密码为空则随机生成32位字符串
+# Hy2密码为空则随机生成高强度字符串
 if [[ -z "$HY2_PASS" ]]; then
-    HY2_PASS=$(head -c 24 /dev/urandom | base64 | tr -d '/+=')
+    HY2_PASS=$(openssl rand -base64 24 | tr -d '/+=\n')
 fi
 
-# AES-256-GCM 需要32字节密钥，生成32字节base64
-SS_KEY=$(sing-box generate rand 32 --base64 2>/dev/null || sing-box generate rand 32 --base64)
+# AES-256-GCM 需要32字节密钥，使用openssl生成标准base64密钥（不依赖sing-box）
+SS_KEY=$(openssl rand -base64 32 | tr -d '\n')
 
 echo ""
 echo -e "${BLUE}===== 当前配置汇总 =====${NC}"
@@ -91,20 +91,20 @@ sing-box version
 
 # ====================== 4. Dynv6 DDNS 自动更新脚本 ======================
 echo -e "${GREEN}[4/9] 生成 Dynv6 IPv6 动态更新脚本 + 定时任务${NC}"
-tee /usr/local/bin/dynv6-update.sh >/dev/null <<EOF
+tee /usr/local/bin/dynv6-update.sh >/dev/null <<'EOF'
 #!/bin/bash
 DOMAIN="${DOMAIN}"
 TOKEN="${DYNV6_TOKEN}"
 LOG="/var/log/dynv6.log"
-API="https://dynv6.com/api/update?zone=\$DOMAIN&token=\$TOKEN"
-echo "[\$(date '+%Y-%m-%d %H:%M:%S')] 执行IPv6更新" >> \$LOG
-IPV6=\$(curl -s -6 https://v6.ident.me)
-if [[ -z "\$IPV6" || "\$IPV6" == fe80* ]]; then
-    echo "IPv6获取失败" >> \$LOG
+API="https://dynv6.com/api/update?zone=$DOMAIN&token=$TOKEN"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] 执行IPv6更新" >> $LOG
+IPV6=$(curl -s -6 https://v6.ident.me)
+if [[ -z "$IPV6" || "$IPV6" == fe80* ]]; then
+    echo "IPv6获取失败" >> $LOG
     exit 1
 fi
-curl -s "\$API&ipv6=\$IPV6" >> \$LOG
-echo "更新完成，当前IPv6: \$IPV6" >> \$LOG
+curl -s "$API&ipv6=$IPV6" >> $LOG
+echo "更新完成，当前IPv6: $IPV6" >> $LOG
 EOF
 chmod +x /usr/local/bin/dynv6-update.sh
 # 每5分钟执行一次DDNS更新
@@ -114,16 +114,16 @@ chmod +x /usr/local/bin/dynv6-update.sh
 
 # ====================== 5. Dynv6 Certbot DNS-01 Hook ======================
 echo -e "${GREEN}[5/9] 生成 DNS-01 证书验证钩子脚本${NC}"
-tee /usr/local/bin/dynv6-certbot-hook.sh >/dev/null <<EOF
+tee /usr/local/bin/dynv6-certbot-hook.sh >/dev/null <<'EOF'
 #!/bin/bash
 DOMAIN="${DOMAIN}"
 TOKEN="${DYNV6_TOKEN}"
-API="https://dynv6.com/api/update?zone=\$DOMAIN&token=\$TOKEN"
-if [[ -n "\$CERTBOT_VALIDATION" ]]; then
-    curl -s "\$API&txt=\$CERTBOT_VALIDATION"
+API="https://dynv6.com/api/update?zone=$DOMAIN&token=$TOKEN"
+if [[ -n "$CERTBOT_VALIDATION" ]]; then
+    curl -s "$API&txt=$CERTBOT_VALIDATION"
     sleep 15
 else
-    curl -s "\$API&txt="
+    curl -s "$API&txt="
 fi
 EOF
 chmod +x /usr/local/bin/dynv6-certbot-hook.sh
@@ -142,7 +142,7 @@ echo "renew_hook = systemctl reload sing-box" >> ${RENEW_FILE}
 systemctl enable --now certbot.timer
 certbot renew --dry-run
 
-# ====================== 8. 生成 Sing-box 服务端配置（DNS改为1.1.1.1/8.8.8.8） ======================
+# ====================== 8. 生成 Sing-box 服务端配置 ======================
 echo -e "${GREEN}[8/9] 生成 Sing-box 配置文件 /etc/sing-box/config.json${NC}"
 tee /etc/sing-box/config.json >/dev/null <<EOF
 {
@@ -230,7 +230,7 @@ HY2_LINK="hysteria2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}?sni=${DOMAIN}&up=${BANDW
 echo -e "${BLUE}HY2分享链接：${HY2_LINK}${NC}"
 echo ""
 
-# ---------------- Sing-box 客户端最简配置模板（DNS同步改为1.1.1.1） ----------------
+# ---------------- Sing-box 客户端最简配置模板 ----------------
 echo -e "${YELLOW}【3. Sing-box 客户端最简配置模板】${NC}"
 cat <<CLIENT
 {
