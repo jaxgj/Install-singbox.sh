@@ -1,4 +1,3 @@
-
 # install-singbox.sh（已集成自动安装ufw、兼容Debian/Ubuntu、SS AES-256-GCM）
 ```bash
 #!/bin/bash
