@@ -136,19 +136,15 @@ tee /etc/sing-box/config.json >/dev/null <<EOF
     "output": "/var/log/sing-box.log"
   },
   "dns": {
+    "version": 2,
     "servers": [
       {
-        "tag": "dns_cloudflare",
+        "tag": "default_dns",
         "address": "1.1.1.1",
-        "detour": "direct"
-      },
-      {
-        "tag": "dns_google",
-        "address": "8.8.8.8",
         "detour": "direct"
       }
     ],
-    "final": "dns_cloudflare",
+    "final": "default_dns",
     "independent_cache": true
   },
   "inbounds": [
