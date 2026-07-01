@@ -135,18 +135,6 @@ tee /etc/sing-box/config.json >/dev/null <<EOF
     "timestamp": true,
     "output": "/var/log/sing-box.log"
   },
-  "dns": {
-    "version": 2,
-    "servers": [
-      {
-        "tag": "default_dns",
-        "address": "1.1.1.1",
-        "detour": "direct"
-      }
-    ],
-    "final": "default_dns",
-    "independent_cache": true
-  },
   "inbounds": [
     {
       "type": "shadowsocks",
