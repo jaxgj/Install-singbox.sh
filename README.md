@@ -34,6 +34,6 @@ Shadowsocks2022(AES-256-GCM) + Hysteria2 全自动部署｜Dynv6 IPv6动态域�
 
 ### 2. 一键执行部署脚本
 ```bash
-wget https://raw.githubusercontent.com/jaxgj/singbox-dynv6-deploy/main/install-singbox.sh
+wget https://github.com/jaxgj/Install-singbox.sh/blob/main/install-singbox.sh
 chmod +x install-singbox.sh
 sudo ./install-singbox.sh
