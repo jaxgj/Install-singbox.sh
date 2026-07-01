@@ -95,34 +95,32 @@ sing-box version
 
 # ====================== 4. 安装acme.sh并签发证书 ======================
 echo -e "${GREEN}[4/7] 安装acme.sh并通过Dynv6 DNS-01签发证书${NC}"
-# 导出Token供acme.sh插件读取
 export DYNV6_TOKEN="${DYNV6_TOKEN}"
+CERT_DIR="/etc/ssl/${DOMAIN}"
+mkdir -p "${CERT_DIR}"
 
-# 若已安装则跳过，否则全新安装
+# 安装acme.sh
 if [ -f "/root/.acme.sh/acme.sh" ]; then
     echo -e "${YELLOW}检测到已安装acme.sh，跳过安装${NC}"
 else
     curl -fsSL https://get.acme.sh | sh -s email=admin@example.com
 fi
 
-# 证书已存在则跳过签发，否则申请
-CERT_DIR="/etc/ssl/${DOMAIN}"
-mkdir -p "${CERT_DIR}"
+# 签发证书
 if [ -f "/root/.acme.sh/${DOMAIN}_ecc/${DOMAIN}.cer" ]; then
     echo -e "${YELLOW}检测到已存在证书，跳过签发步骤${NC}"
 else
     /root/.acme.sh/acme.sh --issue --dns dns_dynv6 -d "${DOMAIN}"
 fi
 
-# 安装证书到统一目录，方便sing-box调用
+# 安装证书到统一目录，重载命令增加服务状态判断
 /root/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" \
     --key-file "${CERT_DIR}/privkey.pem" \
     --fullchain-file "${CERT_DIR}/fullchain.pem" \
-    --reloadcmd "systemctl reload sing-box"
+    --reloadcmd "systemctl is-active --quiet sing-box && systemctl reload sing-box || true"
 
 # ====================== 5. 配置证书自动续期 ======================
 echo -e "${GREEN}[5/7] 配置证书自动续期，续证后热重载sing-box${NC}"
-# acme.sh安装时已自动创建定时任务，此处仅确认重载命令生效
 /root/.acme.sh/acme.sh --renew -d "${DOMAIN}" --dry-run
 
 # ====================== 6. 生成 Sing-box 服务端配置 ======================
@@ -167,9 +165,7 @@ tee /etc/sing-box/config.json >/dev/null <<EOF
         "up": "${BANDWIDTH} mbps",
         "down": "${BANDWIDTH} mbps"
       },
-      "obfs": {
-        "type": "none"
-      }
+      "obfs": {"type": "none"}
     }
   ],
   "outbounds": [{"type": "direct", "tag": "direct"}]
