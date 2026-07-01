@@ -11,7 +11,7 @@ NC='\033[0m'
 clear
 echo -e "${GREEN}=============================================${NC}"
 echo -e "${GREEN} Sing-box 一键部署脚本 | DNS-01 Dynv6 专用 ${NC}"
-echo -e "${GREEN} Shadowsocks2022(AES-256-GCM) + Hysteria2 双协议 ${NC}"
+echo -e "${GREEN} Shadowsocks(aes-256-gcm) + Hysteria2 双协议 ${NC}"
 echo -e "${GREEN} 兼容 Debian 11/12/13 & Ubuntu 20.04/22.04/24.04 ${NC}"
 echo -e "${GREEN}=============================================${NC}"
 echo -e "${YELLOW}说明：强制使用 Dynv6 DNS-01 申请SSL证书，必须提供Dynv6 Token${NC}"
@@ -31,26 +31,29 @@ done
 read -p "3. Shadowsocks TCP 端口 [默认8388]：" SS_PORT
 SS_PORT=${SS_PORT:-8388}
 
-read -p "4. Hysteria2 UDP 端口 [默认8443]：" HY2_PORT
+read -p "4. Shadowsocks 自定义密码，留空自动随机生成：" SS_PASS
+# SS密码为空则自动生成高强度随机字符串
+if [[ -z "$SS_PASS" ]]; then
+    SS_PASS=$(openssl rand -base64 16 | tr -d '/+=\n')
+fi
+
+read -p "5. Hysteria2 UDP 端口 [默认8443]：" HY2_PORT
 HY2_PORT=${HY2_PORT:-8443}
 
-read -p "5. Hysteria2 上下行带宽 mbps [默认100]：" BANDWIDTH
+read -p "6. Hysteria2 上下行带宽 mbps [默认100]：" BANDWIDTH
 BANDWIDTH=${BANDWIDTH:-100}
 
-read -p "6. Hysteria2 自定义密码，留空自动随机生成：" HY2_PASS
+read -p "7. Hysteria2 自定义密码，留空自动随机生成：" HY2_PASS
 # Hy2密码为空则随机生成高强度字符串
 if [[ -z "$HY2_PASS" ]]; then
     HY2_PASS=$(openssl rand -base64 24 | tr -d '/+=\n')
 fi
 
-# AES-256-GCM 需要32字节密钥，使用openssl生成标准base64密钥（不依赖sing-box）
-SS_KEY=$(openssl rand -base64 32 | tr -d '\n')
-
 echo ""
 echo -e "${BLUE}===== 当前配置汇总 =====${NC}"
 echo "域名：$DOMAIN"
 echo "Dynv6 Token：$DYNV6_TOKEN"
-echo "SS端口：$SS_PORT | 加密：2022-blake3-aes-256-gcm | 密钥：$SS_KEY"
+echo "SS端口：$SS_PORT | 加密：aes-256-gcm | 密码：$SS_PASS"
 echo "Hy2端口：$HY2_PORT | 密码：$HY2_PASS"
 echo "Hy2带宽：${BANDWIDTH} mbps"
 echo -e "${BLUE}========================${NC}"
@@ -163,8 +166,8 @@ tee /etc/sing-box/config.json >/dev/null <<EOF
       "tag": "ss-server",
       "listen": "::",
       "listen_port": ${SS_PORT},
-      "method": "2022-blake3-aes-256-gcm",
-      "password": "${SS_KEY}",
+      "method": "aes-256-gcm",
+      "password": "${SS_PASS}",
       "multiplex": {"enabled": true, "max_streams": 64}
     },
     {
@@ -205,15 +208,15 @@ echo -e "${GREEN}          部署全部完成！客户端参数汇总        ${N
 echo -e "${GREEN}=============================================${NC}"
 echo ""
 
-# ---------------- Shadowsocks 2022 AES-256-GCM ----------------
-echo -e "${YELLOW}【1. Shadowsocks 2022】${NC}"
+# ---------------- Shadowsocks aes-256-gcm ----------------
+echo -e "${YELLOW}【1. Shadowsocks】${NC}"
 echo "服务器地址：${DOMAIN}"
 echo "端口：${SS_PORT}"
-echo "加密方式：2022-blake3-aes-256-gcm"
-echo "密钥：${SS_KEY}"
+echo "加密方式：aes-256-gcm"
+echo "密码：${SS_PASS}"
 echo "多路复用：开启"
 # SS标准分享链接
-SS_LINK="ss://$(echo -n "2022-blake3-aes-256-gcm:${SS_KEY}" | base64 -w0)@${DOMAIN}:${SS_PORT}#SS-${DOMAIN}"
+SS_LINK="ss://$(echo -n "aes-256-gcm:${SS_PASS}" | base64 -w0)@${DOMAIN}:${SS_PORT}#SS-${DOMAIN}"
 echo -e "${BLUE}SS分享链接：${SS_LINK}${NC}"
 echo ""
 
@@ -240,8 +243,8 @@ cat <<CLIENT
       "type": "shadowsocks",
       "server": "${DOMAIN}",
       "server_port": ${SS_PORT},
-      "method": "2022-blake3-aes-256-gcm",
-      "password": "${SS_KEY}",
+      "method": "aes-256-gcm",
+      "password": "${SS_PASS}",
       "multiplex": {"enabled": true}
     },
     {
